@@ -1,0 +1,13 @@
+# Never commit keys or real records
+*.key
+*.pem
+.env
+__pycache__/
+*.pyc
+data/*.enc
+data/*.dec
+data/manifest.json
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc

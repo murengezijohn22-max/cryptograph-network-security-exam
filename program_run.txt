@@ -1,0 +1,9 @@
+Key written to /tmp/demo_key/master.key (keep it out of Git)
+Encrypted data/sample_students.csv -> data/sample_students.enc
+SHA-256 of original: c3c8e7b5da4dad6f1bec3f00b5a020d9d87f006ddc4141782437a0241d29f011
+MATCH: decrypted content is identical to the original
+UNCHANGED: data/sample_students.csv
+MODIFIED: data/sample_students.csv no longer matches its stored hash
+exit=2
+Error: Input file not found: data/missing.csv
+exit=1

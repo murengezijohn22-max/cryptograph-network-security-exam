@@ -1,0 +1,121 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs,longtable,array,listings,xcolor,hyperref,enumitem,tabularx,url}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!8},
+  columns=fullflexible
+}
+
+\hypersetup{colorlinks=true,urlcolor=blue!50!black}
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[#1]}}}
+
+\title{Cryptography and Network Security\\ Integrated Situation -- Technical Report}
+\author{{4202670012 John Murengezi}\\ Module ETTCS801, ULK Polytechnic Institute\\ Lecturer: Isaac Tumwine}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A polytechnic institute stores student records on a central server and moves files between two campuses. A review found weak staff passwords, outdated software, unencrypted transfers and guest-network access to the records server, and repeated probes from an unfamiliar external address. This report assesses the risks, presents a Python tool for encryption and integrity checking, and documents laboratory firewall rules and their tests.
+\end{abstract}
+
+\section{Risk assessment}
+Three assets were analysed. Likelihood (L) and impact (I) are scored 1--5; score $= L \times I$.
+
+\begin{table}[h!]
+\small
+\centering
+\begin{tabularx}{\textwidth}{@{}l X X c c c@{}}
+\toprule
+Asset & Vulnerability & Consequence & L & I & Score \\
+\midrule
+Records server & Guest access; outdated software & Exploitation, lateral movement, data theft, ransomware & 5 & 5 & 25 \\
+Staff accounts & Weak passwords & Guessed credentials give unnoticed access to records & 4 & 5 & 20 \\
+Student records in transit & Unencrypted inter-campus transfers & Interception and undetected modification & 3 & 4 & 12 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Ranking rationale.} The server risk ranks first because probing is already observed, guests are untrusted and outdated software has known exploits. Weak passwords rank second because valid credentials bypass other defences. Unencrypted transfers rank third: they need an attacker on the network path, though the impact on confidentiality and integrity is high.
+
+\paragraph{Recommended controls.}
+\begin{itemize}[nosep]
+\item \textbf{Server:} network segmentation with a host firewall (denying guests, allowing only staff to the service) and a patching schedule.
+\item \textbf{Accounts:} a 12-character minimum policy, account lockout and multi-factor authentication.
+\item \textbf{Transfers:} AES-256-GCM encryption with SHA-256 integrity checks, and SFTP/TLS for transport.
+\end{itemize}
+
+\section{Encryption and integrity application}
+\subsection{Design}
+The program \texttt{src/secure\_records.py} uses the Python \texttt{cryptography} library.
+\begin{itemize}[nosep]
+\item \textbf{Encryption:} AES-256-GCM, an authenticated mode giving confidentiality and tamper detection. A fresh random 96-bit nonce is generated per file. The output layout is \texttt{magic(4) | nonce(12) | ciphertext+tag}; the header is authenticated as associated data.
+\item \textbf{Decryption:} the tag is verified first. A wrong key or altered ciphertext raises an error and no output is produced. The \texttt{decrypt-verify} command then compares the SHA-256 of the result with the original.
+\item \textbf{Integrity:} the SHA-256 of the file is stored in \texttt{data/manifest.json} by \texttt{encrypt} or \texttt{hash}. The \texttt{verify} command recomputes it and reports \texttt{UNCHANGED} or \texttt{MODIFIED}.
+\item \textbf{Key handling:} a 32-byte random key is stored outside the repository (\verb|~/.secure_records/master.key|, mode 600) and \texttt{.gitignore} blocks key files.
+\item \textbf{Robust input handling:} missing files, directories, empty files, missing or malformed keys, non-encrypted input and a corrupt manifest give a clear message and exit code 1 instead of a crash.
+\end{itemize}
+
+\subsection{Test evidence}
+Program run on the sample file (\texttt{evidence/program\_run.txt}):
+
+\begin{lstlisting}
+$ python3 src/secure_records.py encrypt sample.txt
+[+] Encrypted sample.txt -> sample.txt.enc
+[+] Manifest updated in data/manifest.json
+
+$ python3 src/secure_records.py verify sample.txt
+[+] Status: UNCHANGED
+\end{lstlisting}
+
+Automated tests (\texttt{python3 -m unittest discover -s tests -v}) cover the round trip, modified plaintext detection, tampered ciphertext, wrong key, and missing/invalid inputs; all 5 tests passed.
+
+\section{Network traffic filtering}
+\subsection{Rules}
+Rules are in \texttt{firewall/firewall\_rules.sh} (iptables, custom chain \texttt{RECORDS\_FW} attached to \texttt{INPUT}). Lab values: server \texttt{192.168.20.10}, guest network \texttt{192.168.30.0/24}, staff network \texttt{192.168.10.0/24}, service \texttt{tcp/\todo{port from assessor}}.
+
+\begin{enumerate}[nosep]
+\item Accept established/related traffic and loopback.
+\item \textbf{Block guests:} log and \texttt{DROP} all traffic from the guest network to the server. It is placed before any allow rule so nothing overrides it.
+\item \textbf{Permit staff:} accept new \texttt{tcp} connections from the staff network to the assessor's service port only.
+\item \textbf{Block others:} log and \texttt{DROP} any other inbound traffic to that service port.
+\end{enumerate}
+
+\begin{lstlisting}
+iptables -A RECORDS_FW -s $GUEST_NET -j DROP
+iptables -A RECORDS_FW -p tcp -s $STAFF_NET --dport $SERVICE_PORT -m conntrack --ctstate NEW -j ACCEPT
+iptables -A RECORDS_FW -p tcp --dport $SERVICE_PORT -j DROP
+\end{lstlisting}
+
+\subsection{Test procedure and results}
+Each test uses \texttt{nc -zv -w 5 192.168.20.10 <port>} from the stated host; full detail is in \texttt{filter\_tests.md}.
+
+\begin{table}[h!]
+\small
+\centering
+\begin{tabularx}{\textwidth}{@{}c l X l@{}}
+\toprule
+\# & Source & Expected & Actual \\
+\midrule
+1 & Staff PC (permitted) & Connection succeeds & \todo{paste result} \\
+2 & Guest PC (blocked) & Timeout, dropped & \todo{paste result} \\
+3 & External host (blocked) & Timeout, dropped & \todo{paste result} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+DROP-rule packet counters (\texttt{iptables -L RECORDS\_FW -n -v}) and log lines (\texttt{FW-GUEST-DROP}, \texttt{FW-SVC-DROP}) provide supporting evidence. \todo{Add screenshots/output from the lab.}
+
+\section{Conclusion}
+The highest risk is unauthorised reach to an unpatched records server, which the firewall rules address directly; encryption with integrity checking protects records in transit and at rest, and stronger authentication remains a required control. Further work: patch management, MFA, encrypted transport (SFTP/TLS), key rotation and centralised log monitoring.
+
+\vspace{1em}
+\noindent\textbf{GitHub repository:} \url{\todo{https://github.com/USERNAME/cryptography-network-security-exam}}
+
+\end{document}
