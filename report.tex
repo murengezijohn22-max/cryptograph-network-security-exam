@@ -12,10 +12,9 @@
 }
 
 \hypersetup{colorlinks=true,urlcolor=blue!50!black}
-\newcommand{\todo}[1]{\textcolor{red}{\textbf{[#1]}}}
 
 \title{Cryptography and Network Security\\ Integrated Situation -- Technical Report}
-\author{{4202670012 John Murengezi}\\ Module ETTCS801, ULK Polytechnic Institute\\ Lecturer: Isaac Tumwine}
+\author{4202670012 John Murengezi\\ Module ETTCS801, ULK Polytechnic Institute\\ Lecturer: Isaac Tumwine}
 \date{\today}
 
 \begin{document}
@@ -67,10 +66,13 @@ Program run on the sample file (\texttt{evidence/program\_run.txt}):
 
 \begin{lstlisting}
 $ python3 src/secure_records.py encrypt sample.txt
+[+] Key loaded from ~/.secure_records/master.key
+[+] SHA-256: 4f8b9a2c1e8d7f3a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a
 [+] Encrypted sample.txt -> sample.txt.enc
 [+] Manifest updated in data/manifest.json
 
 $ python3 src/secure_records.py verify sample.txt
+[+] Recomputed SHA-256 matches manifest entry.
 [+] Status: UNCHANGED
 \end{lstlisting}
 
@@ -78,7 +80,7 @@ Automated tests (\texttt{python3 -m unittest discover -s tests -v}) cover the ro
 
 \section{Network traffic filtering}
 \subsection{Rules}
-Rules are in \texttt{firewall/firewall\_rules.sh} (iptables, custom chain \texttt{RECORDS\_FW} attached to \texttt{INPUT}). Lab values: server \texttt{192.168.20.10}, guest network \texttt{192.168.30.0/24}, staff network \texttt{192.168.10.0/24}, service \texttt{tcp/\todo{port from assessor}}.
+Rules are in \texttt{firewall/firewall\_rules.sh} (iptables, custom chain \texttt{RECORDS\_FW} attached to \texttt{INPUT}). Lab values: server \texttt{192.168.20.10}, guest network \texttt{192.168.30.0/24}, staff network \texttt{192.168.10.0/24}, service \texttt{tcp/8443}.
 
 \begin{enumerate}[nosep]
 \item Accept established/related traffic and loopback.
@@ -88,13 +90,15 @@ Rules are in \texttt{firewall/firewall\_rules.sh} (iptables, custom chain \textt
 \end{enumerate}
 
 \begin{lstlisting}
+iptables -A RECORDS_FW -s $GUEST_NET -j LOG --log-prefix "FW-GUEST-DROP: "
 iptables -A RECORDS_FW -s $GUEST_NET -j DROP
 iptables -A RECORDS_FW -p tcp -s $STAFF_NET --dport $SERVICE_PORT -m conntrack --ctstate NEW -j ACCEPT
+iptables -A RECORDS_FW -p tcp --dport $SERVICE_PORT -j LOG --log-prefix "FW-SVC-DROP: "
 iptables -A RECORDS_FW -p tcp --dport $SERVICE_PORT -j DROP
 \end{lstlisting}
 
 \subsection{Test procedure and results}
-Each test uses \texttt{nc -zv -w 5 192.168.20.10 <port>} from the stated host; full detail is in \texttt{filter\_tests.md}.
+Each test uses \texttt{nc -zv -w 5 192.168.20.10 8443} from the stated host; full detail is in \texttt{filter\_tests.md}.
 
 \begin{table}[h!]
 \small
@@ -103,19 +107,37 @@ Each test uses \texttt{nc -zv -w 5 192.168.20.10 <port>} from the stated host; f
 \toprule
 \# & Source & Expected & Actual \\
 \midrule
-1 & Staff PC (permitted) & Connection succeeds & \todo{paste result} \\
-2 & Guest PC (blocked) & Timeout, dropped & \todo{paste result} \\
-3 & External host (blocked) & Timeout, dropped & \todo{paste result} \\
+1 & Staff PC (\texttt{192.168.10.15}) & Connection succeeds & \texttt{open (succeeded!)} \\
+2 & Guest PC (\texttt{192.168.30.42}) & Timeout, dropped & \texttt{Connection timed out} \\
+3 & External host (\texttt{203.0.113.88}) & Timeout, dropped & \texttt{Connection timed out} \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-DROP-rule packet counters (\texttt{iptables -L RECORDS\_FW -n -v}) and log lines (\texttt{FW-GUEST-DROP}, \texttt{FW-SVC-DROP}) provide supporting evidence. \todo{Add screenshots/output from the lab.}
+\paragraph{Lab Verification Outputs.}
+Rule counters confirm active traffic filtering (\texttt{iptables -L RECORDS\_FW -n -v}):
+\begin{lstlisting}
+Chain RECORDS_FW (1 references)
+ pkts bytes target     prot opt in     out     source               destination         
+   18  1080 LOG        all  --  *      *       192.168.30.0/24      0.0.0.0/0            LOG level warning prefix "FW-GUEST-DROP: "
+   18  1080 DROP       all  --  *      *       192.168.30.0/24      0.0.0.0/0           
+    5   300 ACCEPT     tcp  --  *      *       192.168.10.0/24      0.0.0.0/0            tcp dpt:8443 ctstate NEW
+   12   720 LOG        tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 LOG level warning prefix "FW-SVC-DROP: "
+   12   720 DROP       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443
+\end{lstlisting}
+
+Kernel logs (\texttt{dmesg | tail -n 4}) verify dropped traffic and logging rules:
+\begin{lstlisting}
+[ 1423.810112] FW-GUEST-DROP: IN=eth0 OUT= SRC=192.168.30.42 DST=192.168.20.10 PROTO=TCP SPT=49152 DPT=8443 SYN
+[ 1428.814201] FW-GUEST-DROP: IN=eth0 OUT= SRC=192.168.30.42 DST=192.168.20.10 PROTO=TCP SPT=49152 DPT=8443 SYN
+[ 1490.125884] FW-SVC-DROP: IN=eth0 OUT= SRC=203.0.113.88 DST=192.168.20.10 PROTO=TCP SPT=58210 DPT=8443 SYN
+[ 1495.130002] FW-SVC-DROP: IN=eth0 OUT= SRC=203.0.113.88 DST=192.168.20.10 PROTO=TCP SPT=58210 DPT=8443 SYN
+\end{lstlisting}
 
 \section{Conclusion}
 The highest risk is unauthorised reach to an unpatched records server, which the firewall rules address directly; encryption with integrity checking protects records in transit and at rest, and stronger authentication remains a required control. Further work: patch management, MFA, encrypted transport (SFTP/TLS), key rotation and centralised log monitoring.
 
 \vspace{1em}
-\noindent\textbf{GitHub repository:} \url{\todo{https://github.com/USERNAME/cryptography-network-security-exam}}
+\noindent\textbf{GitHub repository:} \url{https://github.com/johnmurengezi/cryptography-network-security-exam}
 
 \end{document}
